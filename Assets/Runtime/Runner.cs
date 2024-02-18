@@ -65,6 +65,10 @@ namespace DiffentialGrowth {
         void Update() {
             var dist_insert = tuner.baseDist;
             var dist_repulse = dist_insert * tuner.repulsion_dist;
+            var dist_align = dist_insert * 0.5f;
+
+            var f_repulse = 0.1f;
+            var f_align = 0.01f;
 
             var dt = 1f / 30; // Time.deltaTime;
             var eps = dist_insert * EPSILON;
@@ -81,13 +85,27 @@ namespace DiffentialGrowth {
                     if (eps < dist_sq && dist_sq < dist_repulse * dist_repulse) {
                         var dist = math.sqrt(dist_sq);
                         var f = dx / (dist_sq * dist);
-                        accel -= f * 0.1f;
+                        accel -= f * f_repulse;
                         n_neighboars++;
                     }
                 }
-
                 if (n_neighboars > 0)
-                    p.velocity += accel * (dt / n_neighboars);
+                   accel /= n_neighboars;
+
+                foreach (var j in new int[] { -1, 1 }) {
+                    var p1 = particles[(i + j + particles.Count) % particles.Count];
+                    var dx = p1.position - p.position;
+                    var dist_sq = math.lengthsq(dx);
+                    if (eps < dist_sq) {
+                        var dist = math.sqrt(dist_sq);
+                        if (dist < dist_align)
+                            dist *= -1f;
+                        var f = dx / (dist_sq * dist);
+                        accel += f * f_align;
+                    }
+                }
+
+                p.velocity += accel * dt;
                 particles[i] = p;
             }
 
