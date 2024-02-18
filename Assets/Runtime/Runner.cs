@@ -1,5 +1,6 @@
 using Gist2.Adapter;
 using LLGraphicsUnity;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -130,6 +131,14 @@ namespace DiffentialGrowth {
                     i++;
                 }
             }
+        }
+        #endregion
+
+        #region interface
+        public object CuurTuner => tuner;
+        public void Invalidate() {}
+        public void Restart() {
+            InitParticles();
         }
         #endregion
 
