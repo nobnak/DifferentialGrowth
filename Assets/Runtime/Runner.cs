@@ -68,8 +68,8 @@ namespace DiffentialGrowth {
             var dist_repulse = dist_insert * tuner.repulsion_dist;
             var dist_align = dist_insert * 0.5f;
 
-            var f_repulse = 0.1f;
-            var f_align = 0.01f;
+            var f_repulse = tuner.repulsion_force;
+            var f_align = tuner.align_force;
 
             var dt = 1f / 30; // Time.deltaTime;
             var eps = dist_insert * EPSILON;
@@ -169,7 +169,12 @@ namespace DiffentialGrowth {
         [System.Serializable]
         public class Tuner {
             public float baseDist = 1f;
+            
             public float repulsion_dist = 5f;
+            public float repulsion_force = 0.1f;
+
+            public float align_force = 0.01f;
+
             public float dump_velocity = 10f;
         }
         #endregion
