@@ -64,16 +64,16 @@ namespace DiffentialGrowth {
             }
         }
         void Update() {
-            var dist_insert = tuner.maxDistance * tuner.distanceScale;
-            var dist_repulse = tuner.repulsion_dist * tuner.distanceScale;
-            var dist_attract = tuner.minDistance * tuner.distanceScale;
+            var dist_insert = tuner.maxDistance * tuner.scale;
+            var dist_repulse = tuner.repulsion_dist * tuner.scale;
+            var dist_attract = tuner.minDistance * tuner.scale;
 
             var f_attract = tuner.attraction_force;
             var f_repulse = tuner.repulsion_force;
             var f_align = tuner.alignment_force;
 
             var eps = dist_insert * EPSILON;
-            var dt = 0.01f * tuner.distanceScale;
+            var dt = tuner.timeStep * tuner.scale;
 
             for (var i = 0; i < particles.Count; i++) {
                 var p = particles[i];
@@ -129,12 +129,28 @@ namespace DiffentialGrowth {
                 particles[i] = p;
             }
 
+            // update positions
             for (var i = 0; i < particles.Count; i++) {
                 var p = particles[i];
                 p.position += p.velocity * dt;
                 particles[i] = p;
             }
 
+            // remove overlapping particles
+            for (var i = 0; i < particles.Count; ) {
+                var i1 = (i + 1) % particles.Count;
+                var p0 = particles[i];
+                var p1 = particles[i1];
+                var dx = p1.position - p0.position;
+                var dist_sq = math.lengthsq(dx);
+                if (dist_sq < dist_attract * dist_attract) {
+                    particles.RemoveAt(i);
+                    continue;
+                }
+                i++;
+            }
+
+            // insert new particles
             for (var i = 0; i < particles.Count; i++) {
                 var p0 = particles[i];
                 var p1 = particles[(i + 1) % particles.Count];
@@ -185,7 +201,9 @@ namespace DiffentialGrowth {
 
         [System.Serializable]
         public class Tuner {
-            public float distanceScale = 1f;
+            public float scale = 1f;
+            public float timeStep = 0.01f;
+
             public float minDistance = 1f;
             public float maxDistance = 5f;
             public float repulsion_dist = 10f;

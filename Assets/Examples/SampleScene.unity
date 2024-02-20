@@ -210,11 +210,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   tuner:
-    distanceScale: 0.2
+    scale: 0.1
+    timeStep: 0.1
     minDistance: 1
     maxDistance: 2
     repulsion_dist: 4
-    repulsion_force: 0.2
+    repulsion_force: 2
     attraction_force: 0.5
     alignment_force: 0.5
 --- !u!4 &620437102
