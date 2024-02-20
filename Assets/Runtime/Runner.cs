@@ -64,57 +64,74 @@ namespace DiffentialGrowth {
             }
         }
         void Update() {
-            var dist_insert = tuner.baseDist;
-            var dist_repulse = dist_insert * tuner.repulsion_dist;
-            var dist_align = dist_insert * 0.5f;
+            var dist_insert = tuner.maxDistance * tuner.distanceScale;
+            var dist_repulse = tuner.repulsion_dist * tuner.distanceScale;
+            var dist_attract = tuner.minDistance * tuner.distanceScale;
 
+            var f_attract = tuner.attraction_force;
             var f_repulse = tuner.repulsion_force;
-            var f_align = tuner.align_force;
+            var f_align = tuner.alignment_force;
 
-            var dt = 1f / 30; // Time.deltaTime;
             var eps = dist_insert * EPSILON;
+            var dt = 0.01f * tuner.distanceScale;
 
             for (var i = 0; i < particles.Count; i++) {
                 var p = particles[i];
-                float2 accel = default;
-                var n_neighboars = 0;
+                var i0 = (i + particles.Count - 1) % particles.Count;
+                var i1 = (i + 1) % particles.Count;
+                float2 velocity = default;
+
+                // attraction
+                if (i0 >= 0) {
+                    var p0 = particles[i0];
+                    var dx = p0.position - p.position;
+                    var dist_sq = math.lengthsq(dx);
+                    if (dist_sq > dist_attract * dist_attract) {
+                        velocity += f_attract * dx;
+                    }
+                }
+                if (i1 >= 0) {
+                    var p1 = particles[i1];
+                    var dx = p1.position - p.position;
+                    var dist_sq = math.lengthsq(dx);
+                    if (dist_sq > dist_attract * dist_attract) {
+                        velocity += f_attract * dx;
+                    }
+                }
+
+                // repulsion
+                var weights_repulsion = 0f;
+                float2 velocity_repulsion = default;
                 for (var j = 0; j < particles.Count; j++) {
                     if (i == j) continue;
                     var q = particles[j];
                     var dx = q.position - p.position;
                     var dist_sq = math.lengthsq(dx);
                     if (eps < dist_sq && dist_sq < dist_repulse * dist_repulse) {
-                        var dist = math.sqrt(dist_sq);
-                        var f = dx / (dist_sq * dist);
-                        accel -= f * f_repulse;
-                        n_neighboars++;
+                        var w = 1f / dist_sq;
+                        velocity_repulsion += -(f_repulse * w) * dx;
+                        weights_repulsion += w;
                     }
                 }
-                if (n_neighboars > 0)
-                   accel /= n_neighboars;
+                if (weights_repulsion > 0)
+                    velocity += velocity_repulsion / weights_repulsion;
 
-                foreach (var j in new int[] { -1, 1 }) {
-                    var p1 = particles[(i + j + particles.Count) % particles.Count];
-                    var dx = p1.position - p.position;
-                    var dist_sq = math.lengthsq(dx);
-                    if (eps < dist_sq) {
-                        var dist = math.sqrt(dist_sq);
-                        if (dist < dist_align)
-                            dist *= -1f;
-                        var f = dx / (dist_sq * dist);
-                        accel += f * f_align;
-                    }
+                // alignment
+                if (i0 >= 0 && i1 >= 0) {
+                    var p0 = particles[i0];
+                    var p1 = particles[i1];
+                    var p_mid = (p0.position + p1.position) / 2f;
+                    var dx = p_mid - p.position;
+                    velocity += f_align * dx;
                 }
 
-                p.velocity += accel * dt;
+                p.velocity = velocity;
                 particles[i] = p;
             }
 
-            var dumper = math.saturate(tuner.dump_velocity * dt);
             for (var i = 0; i < particles.Count; i++) {
                 var p = particles[i];
                 p.position += p.velocity * dt;
-                p.velocity = math.lerp(p.velocity, 0, dumper);
                 particles[i] = p;
             }
 
@@ -124,7 +141,7 @@ namespace DiffentialGrowth {
                 var dist_sq = math.distancesq(p0.position, p1.position);
                 if (dist_sq > dist_insert * dist_insert) {
                     var p = new Particle() {
-                        position = (p0.position + p1.position) / 2,
+                        position = (p0.position + p1.position) / 2f,
                         velocity = p1.position - p0.position,
                     };
                     particles.Insert(i + 1, p);
@@ -132,7 +149,7 @@ namespace DiffentialGrowth {
                 }
             }
         }
-        #endregion
+#endregion
 
         #region interface
         public object CuurTuner => tuner;
@@ -168,14 +185,14 @@ namespace DiffentialGrowth {
 
         [System.Serializable]
         public class Tuner {
-            public float baseDist = 1f;
-            
-            public float repulsion_dist = 5f;
-            public float repulsion_force = 0.1f;
+            public float distanceScale = 1f;
+            public float minDistance = 1f;
+            public float maxDistance = 5f;
+            public float repulsion_dist = 10f;
 
-            public float align_force = 0.01f;
-
-            public float dump_velocity = 10f;
+            public float repulsion_force = 0.2f;
+            public float attraction_force = 0.5f;
+            public float alignment_force = 0.45f;
         }
         #endregion
     }
