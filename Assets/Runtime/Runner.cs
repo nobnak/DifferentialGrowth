@@ -15,6 +15,8 @@ namespace DiffentialGrowth {
         protected Tuner tuner = new();
 
         protected GraphicsList<Particle> particles;
+        protected List<float3> boundingLines;
+
         protected GLMaterial gl;
 
         #region unity
@@ -24,9 +26,13 @@ namespace DiffentialGrowth {
                 var buf = new GraphicsBuffer(GraphicsBuffer.Target.Structured, size, Marshal.SizeOf<Particle>());
                 return buf;
             });
+            boundingLines = new();
+
+            InitBoundary();
 
             InitParticles();
         }
+
         void OnDisable() {
             gl?.Dispose();
             gl = null;
@@ -136,6 +142,20 @@ namespace DiffentialGrowth {
                 particles[i] = p;
             }
 
+            // boundary
+            for (var i = 0; i < particles.Count; i++) {
+                var p = particles[i];
+                for (var j = 0; j < boundingLines.Count; j++) {
+                    var b = boundingLines[j];
+                    var n = b.xy;
+                    var diff = math.dot(p.position, n.xy) - b.z;
+                    if (diff > 0f) {
+                        p.position -= diff * n;
+                    }
+                }
+                particles[i] = p;
+            }
+
             // remove overlapping particles
             for (var i = 0; i < particles.Count; ) {
                 var i1 = (i + 1) % particles.Count;
@@ -165,7 +185,7 @@ namespace DiffentialGrowth {
                 }
             }
         }
-#endregion
+        #endregion
 
         #region interface
         public object CuurTuner => tuner;
@@ -187,6 +207,27 @@ namespace DiffentialGrowth {
                     velocity = new float2(0, 0),
                 };
                 particles.Add(p);
+            }
+        }
+
+        private void InitBoundary() {
+            var c = Camera.main;
+            var z = c.WorldToScreenPoint(new Vector3(0, 0, 0)).z;
+            var viewportVertices = new float2[] { new float2(0, 0), new float2(1, 0), new float2(1, 1), new float2(0, 1) };
+            boundingLines.Clear();
+            var vertices_wc = new List<float3>();
+            for (var i = 0; i < viewportVertices.Length; i++) {
+                var v = viewportVertices[i];
+                float3 p_wc = c.ViewportToWorldPoint(new float3(v.x, v.y, z));
+                vertices_wc.Add(p_wc);
+            }
+            for (var i = 0; i < vertices_wc.Count; i++) {
+                var p0 = vertices_wc[i].xy;
+                var p1 = vertices_wc[(i + 1) % vertices_wc.Count].xy;
+                var diff = p1 - p0;
+                var n = math.normalize(new float2(diff.y, -diff.x));
+                var d = math.dot(p0, n);
+                boundingLines.Add(new float3(n, d));
             }
         }
         #endregion
