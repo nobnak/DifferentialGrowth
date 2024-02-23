@@ -186,6 +186,17 @@
       },
       "url": "https://package.openupm.com"
     },
+    "jp.nobnak.effspace": {
+      "version": "1.0.0",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.mathematics": "1.2.6",
+        "jp.nobnak.gist2": "1.4.3",
+        "jp.nobnak.llgraphics": "1.0.5"
+      },
+      "url": "https://package.openupm.com"
+    },
     "jp.nobnak.gist2": {
       "version": "1.4.3",
       "depth": 0,

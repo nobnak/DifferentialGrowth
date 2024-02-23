@@ -4,9 +4,11 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.UIElements;
 
 namespace DiffentialGrowth {
 
@@ -17,10 +19,22 @@ namespace DiffentialGrowth {
         protected GraphicsList<Particle> particles;
         protected List<float3> boundingLines;
 
+        protected int2 screenSize;
+        protected float4x4 screenToWorld;
+
         protected GLMaterial gl;
 
         #region unity
         void OnEnable() {
+            var c = Camera.main;
+            screenSize = new int2(c.pixelWidth, c.pixelHeight);
+            var halfHeight = c.orthographicSize;
+            var aspect = c.aspect;
+            screenToWorld = float4x4.TRS(
+                new float3(-aspect * halfHeight, -halfHeight, 0f),
+                quaternion.identity,
+                new float3(2f * aspect * halfHeight / screenSize.x, 2f * halfHeight / screenSize.y, 1f));
+
             gl = new GLMaterial();
             particles = new(size => {
                 var buf = new GraphicsBuffer(GraphicsBuffer.Target.Structured, size, Marshal.SizeOf<Particle>());
@@ -56,23 +70,25 @@ namespace DiffentialGrowth {
                     GL.modelview = c.worldToCameraMatrix;
                     GL.LoadProjectionMatrix(c.projectionMatrix);
 
-                    using (gl.GetScope(prop)) {
-                        using (new GLPrimitiveScope(GL.LINE_STRIP)) {
-                            var n = particles.Count;
-                            for (int i = 0; i <= n; i++) {
-                                var p = particles[i % n];
-                                GL.Vertex(new float3(p.position, 0f));
+                    using (new GLModelViewScope(screenToWorld)) {
+                        using (gl.GetScope(prop)) {
+                            using (new GLPrimitiveScope(GL.LINE_STRIP)) {
+                                var n = particles.Count;
+                                for (int i = 0; i <= n; i++) {
+                                    var p = particles[i % n];
+                                    GL.Vertex(new float3(p.position, 0f));
+                                }
                             }
                         }
-
                     }
                 }
             }
         }
         void Update() {
-            var dist_insert = tuner.maxDistance * tuner.scale;
-            var dist_repulse = tuner.repulsion_dist * tuner.scale;
-            var dist_attract = tuner.minDistance * tuner.scale;
+            var scale = tuner.scale * screenSize.y;
+            var dist_insert = tuner.maxDistance * scale;
+            var dist_repulse = tuner.repulsion_dist * scale;
+            var dist_attract = tuner.minDistance * scale;
 
             var f_attract = tuner.attraction_force;
             var f_repulse = tuner.repulsion_force;
@@ -199,11 +215,12 @@ namespace DiffentialGrowth {
         private void InitParticles() {
             particles.Clear();
             var n = 10;
-            var r = 1f;
+            var r = screenSize.y >> 2;
+            var center = new float2(screenSize.x / 2f, screenSize.y / 2f);
             for (var i = 0; i < n; i++) {
                 var a = i * (2 * math.PI / n);
                 var p = new Particle() {
-                    position = new float2(math.cos(a) * r, math.sin(a) * r),
+                    position = new float2(math.cos(a) * r, math.sin(a) * r) + center,
                     velocity = new float2(0, 0),
                 };
                 particles.Add(p);
@@ -211,24 +228,31 @@ namespace DiffentialGrowth {
         }
 
         private void InitBoundary() {
-            var c = Camera.main;
-            var z = c.WorldToScreenPoint(new Vector3(0, 0, 0)).z;
-            var viewportVertices = new float2[] { new float2(0, 0), new float2(1, 0), new float2(1, 1), new float2(0, 1) };
             boundingLines.Clear();
-            var vertices_wc = new List<float3>();
-            for (var i = 0; i < viewportVertices.Length; i++) {
-                var v = viewportVertices[i];
-                float3 p_wc = c.ViewportToWorldPoint(new float3(v.x, v.y, z));
-                vertices_wc.Add(p_wc);
-            }
-            for (var i = 0; i < vertices_wc.Count; i++) {
-                var p0 = vertices_wc[i].xy;
-                var p1 = vertices_wc[(i + 1) % vertices_wc.Count].xy;
+
+            var vertices = new List<float2> {
+                new float2(0f, 0f),
+                new float2(0f, screenSize.y),
+                screenSize,
+                new float2(screenSize.x, 0f)
+            };
+
+            for (var i = 0; i < vertices.Count; i++) {
+                var p0 = vertices[i];
+                var p1 = vertices[(i + 1) % vertices.Count];
                 var diff = p1 - p0;
-                var n = math.normalize(new float2(diff.y, -diff.x));
+                var n = math.normalize(new float2(-diff.y, diff.x));
                 var d = math.dot(p0, n);
                 boundingLines.Add(new float3(n, d));
             }
+#if UNITY_EDITOR
+            var tmp = new StringBuilder($"Boundary\n");
+            for (var i = 0; i < boundingLines.Count; i++) {
+                var b = boundingLines[i];
+                tmp.AppendLine($" {i}:v={b.xy},d={b.z}");
+            }
+            Debug.Log(tmp);
+            #endif
         }
         #endregion
 
