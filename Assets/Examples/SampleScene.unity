@@ -210,7 +210,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   tuner:
-    scale: 0.008
+    scale: 0.01
     timeStep: 1
     minDistance: 1
     maxDistance: 2
@@ -218,6 +218,7 @@ MonoBehaviour:
     repulsion_force: 2
     attraction_force: 0.5
     alignment_force: 0.5
+    levelOfGrid: 7
 --- !u!4 &620437102
 Transform:
   m_ObjectHideFlags: 0

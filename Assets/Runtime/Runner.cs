@@ -26,7 +26,6 @@ namespace DiffentialGrowth {
 
         protected int2 screenSize;
         protected float4x4 screenToWorld;
-        protected float2 queryRange;
 
         protected GLMaterial gl;
 
@@ -41,11 +40,12 @@ namespace DiffentialGrowth {
                 quaternion.identity,
                 new float3(2f * aspect * halfHeight / screenSize.x, 2f * halfHeight / screenSize.y, 1f));
 
-            var verticalCellCount = 1 << 6;
-            FPointGridExt.RecommendGrid(screenSize, verticalCellCount, out var cellCount, out var cellSize);
-            grid = new(cellCount, cellSize, float2.zero);
+            var verticalCellCount = 1 << math.clamp(tuner.levelOfGrid, 2, 10);
+            var boundaryGap = 10;
+            FPointGridExt.RecommendGrid(screenSize + boundaryGap * 2, verticalCellCount, out var cellCount, out var cellSize);
+            Debug.Log($"Grid: screen={screenSize},cells={cellCount},size={cellSize}");
+            grid = new(cellCount, cellSize, boundaryGap);
             elementIds = new();
-            queryRange = cellSize * 2f;
 
             gl = new GLMaterial();
             particles = new(size => {
@@ -109,6 +109,13 @@ namespace DiffentialGrowth {
             var eps = dist_insert * EPSILON;
             var dt = tuner.timeStep * tuner.scale;
 
+            var queryRange = new float2(dist_repulse, dist_repulse);
+            var queryCells = math.ceil(queryRange / grid.cellSize);
+            if (math.any(queryCells > 10)) {
+                Debug.LogWarning($"Querying many cells: n={queryCells}");
+            }
+
+
             grid.Clear();
             elementIds.Clear();
             for (var i = 0; i < particles.Count; i++) {
@@ -146,17 +153,19 @@ namespace DiffentialGrowth {
                 var weights_repulsion = 0f;
                 float2 velocity_repulsion = default;
                 if (elementId < 0) Debug.LogError($"Element not found at: i={i}");
-                foreach (var eid0 in grid.Query(p.position - queryRange, p.position + queryRange)) {
-                    if (elementId == eid0) continue;
-                    var e = grid.grid.elements[eid0];
-                    var j = e.id;
-                    var q = particles[j];
-                    var dx = q.position - p.position;
-                    var dist_sq = math.lengthsq(dx);
-                    if (eps < dist_sq && dist_sq < dist_repulse * dist_repulse) {
-                        var w = 1f / dist_sq;
-                        velocity_repulsion += -(f_repulse * w) * dx;
-                        weights_repulsion += w;
+                else {
+                    foreach (var eid0 in grid.Query(p.position - queryRange, p.position + queryRange)) {
+                        if (elementId == eid0) continue;
+                        var e = grid.grid.elements[eid0];
+                        var j = e.id;
+                        var q = particles[j];
+                        var dx = q.position - p.position;
+                        var dist_sq = math.lengthsq(dx);
+                        if (eps < dist_sq && dist_sq < dist_repulse * dist_repulse) {
+                            var w = 1f / dist_sq;
+                            velocity_repulsion += -(f_repulse * w) * dx;
+                            weights_repulsion += w;
+                        }
                     }
                 }
                 if (weights_repulsion > 0)
@@ -302,6 +311,9 @@ namespace DiffentialGrowth {
             public float repulsion_force = 0.2f;
             public float attraction_force = 0.5f;
             public float alignment_force = 0.45f;
+
+            [Range(2, 10)]
+            public int levelOfGrid = 5;
         }
         #endregion
     }
