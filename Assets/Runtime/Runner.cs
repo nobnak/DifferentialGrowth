@@ -1,3 +1,5 @@
+using EffSpace.Extensions;
+using EffSpace.Models;
 using Gist2.Adapter;
 using LLGraphicsUnity;
 using System;
@@ -9,6 +11,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.UIElements;
+using static UnityEditor.PlayerSettings;
 
 namespace DiffentialGrowth {
 
@@ -18,9 +21,12 @@ namespace DiffentialGrowth {
 
         protected GraphicsList<Particle> particles;
         protected List<float3> boundingLines;
+        protected List<int> elementIds;
+        protected FPointGrid grid;
 
         protected int2 screenSize;
         protected float4x4 screenToWorld;
+        protected float2 queryRange;
 
         protected GLMaterial gl;
 
@@ -34,6 +40,12 @@ namespace DiffentialGrowth {
                 new float3(-aspect * halfHeight, -halfHeight, 0f),
                 quaternion.identity,
                 new float3(2f * aspect * halfHeight / screenSize.x, 2f * halfHeight / screenSize.y, 1f));
+
+            var verticalCellCount = 1 << 6;
+            FPointGridExt.RecommendGrid(screenSize, verticalCellCount, out var cellCount, out var cellSize);
+            grid = new(cellCount, cellSize, float2.zero);
+            elementIds = new();
+            queryRange = cellSize * 2f;
 
             gl = new GLMaterial();
             particles = new(size => {
@@ -97,8 +109,17 @@ namespace DiffentialGrowth {
             var eps = dist_insert * EPSILON;
             var dt = tuner.timeStep * tuner.scale;
 
+            grid.Clear();
+            elementIds.Clear();
             for (var i = 0; i < particles.Count; i++) {
                 var p = particles[i];
+                var element_id = grid.Insert(i, p.position);
+                elementIds.Add(element_id);
+            }
+
+            for (var i = 0; i < particles.Count; i++) {
+                var p = particles[i];
+                var elementId = elementIds[i];
                 var i0 = (i + particles.Count - 1) % particles.Count;
                 var i1 = (i + 1) % particles.Count;
                 float2 velocity = default;
@@ -124,8 +145,11 @@ namespace DiffentialGrowth {
                 // repulsion
                 var weights_repulsion = 0f;
                 float2 velocity_repulsion = default;
-                for (var j = 0; j < particles.Count; j++) {
-                    if (i == j) continue;
+                if (elementId < 0) Debug.LogError($"Element not found at: i={i}");
+                foreach (var eid0 in grid.Query(p.position - queryRange, p.position + queryRange)) {
+                    if (elementId == eid0) continue;
+                    var e = grid.grid.elements[eid0];
+                    var j = e.id;
                     var q = particles[j];
                     var dx = q.position - p.position;
                     var dist_sq = math.lengthsq(dx);
@@ -219,10 +243,12 @@ namespace DiffentialGrowth {
             var center = new float2(screenSize.x / 2f, screenSize.y / 2f);
             for (var i = 0; i < n; i++) {
                 var a = i * (2 * math.PI / n);
+                var pos = new float2(math.cos(a) * r, math.sin(a) * r) + center;
                 var p = new Particle() {
-                    position = new float2(math.cos(a) * r, math.sin(a) * r) + center,
+                    position = pos,
                     velocity = new float2(0, 0),
                 };
+
                 particles.Add(p);
             }
         }

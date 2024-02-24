@@ -210,7 +210,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   tuner:
-    scale: 0.01
+    scale: 0.008
     timeStep: 1
     minDistance: 1
     maxDistance: 2
