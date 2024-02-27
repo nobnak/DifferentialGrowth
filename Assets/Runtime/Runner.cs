@@ -3,15 +3,12 @@ using EffSpace.Models;
 using Gist2.Adapter;
 using LLGraphicsUnity;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEngine.UIElements;
-using static UnityEditor.PlayerSettings;
 
 namespace DiffentialGrowth {
 
@@ -19,7 +16,12 @@ namespace DiffentialGrowth {
         [SerializeField]
         protected Tuner tuner = new();
 
-        protected GraphicsList<Particle> particles;
+        protected List<Particle> particles;
+        protected List<Wing<int>> indices;
+        protected Queue<int> unused;
+        protected Queue<Particle> addedParticles;
+        protected Queue<Wing<int>> addedIndices;
+
         protected List<float3> boundingLines;
         protected List<int> elementIds;
         protected FPointGrid grid;
@@ -48,10 +50,11 @@ namespace DiffentialGrowth {
             elementIds = new();
 
             gl = new GLMaterial();
-            particles = new(size => {
-                var buf = new GraphicsBuffer(GraphicsBuffer.Target.Structured, size, Marshal.SizeOf<Particle>());
-                return buf;
-            });
+            particles = new();
+            indices = new();
+            unused = new();
+            addedParticles = new();
+            addedIndices = new();
             boundingLines = new();
 
             InitBoundary();
@@ -63,7 +66,6 @@ namespace DiffentialGrowth {
             gl?.Dispose();
             gl = null;
 
-            particles?.Dispose();
             particles = null;
         }
         void OnRenderObject() {
@@ -84,11 +86,17 @@ namespace DiffentialGrowth {
 
                     using (new GLModelViewScope(screenToWorld)) {
                         using (gl.GetScope(prop)) {
-                            using (new GLPrimitiveScope(GL.LINE_STRIP)) {
+                            using (new GLPrimitiveScope(GL.LINES)) {
                                 var n = particles.Count;
-                                for (int i = 0; i <= n; i++) {
-                                    var p = particles[i % n];
-                                    GL.Vertex(new float3(p.position, 0f));
+                                for (int i = 0; i < n; i++) {
+                                    var iw = indices[i];
+                                    if (iw.value < 0) continue;
+
+                                    var iw1 = indices[iw.next];
+                                    var p0 = particles[iw.value];
+                                    var p1 = particles[iw1.value];
+                                    GL.Vertex(new float3(p0.position, 0f));
+                                    GL.Vertex(new float3(p1.position, 0f));
                                 }
                             }
                         }
@@ -119,29 +127,36 @@ namespace DiffentialGrowth {
             grid.Clear();
             elementIds.Clear();
             for (var i = 0; i < particles.Count; i++) {
-                var p = particles[i];
-                var element_id = grid.Insert(i, p.position);
+                var iw = indices[i];
+                var element_id = -1;
+                if (iw.value >= 0) {
+                    var p = particles[iw.value];
+                    element_id = grid.Insert(i, p.position);
+                }
                 elementIds.Add(element_id);
             }
 
             for (var i = 0; i < particles.Count; i++) {
-                var p = particles[i];
-                var elementId = elementIds[i];
-                var i0 = (i + particles.Count - 1) % particles.Count;
-                var i1 = (i + 1) % particles.Count;
+                var iw = indices[i];
+                if (iw.value < 0) continue;
+
+                var p = particles[iw.value];
+                var elementId = elementIds[iw.value];
                 float2 velocity = default;
 
                 // attraction
-                if (i0 >= 0) {
-                    var p0 = particles[i0];
+                if (iw.prev >= 0) {
+                    var iw0 = indices[iw.prev];
+                    var p0 = particles[iw0.value];
                     var dx = p0.position - p.position;
                     var dist_sq = math.lengthsq(dx);
                     if (dist_sq > dist_attract * dist_attract) {
                         velocity += f_attract * dx;
                     }
                 }
-                if (i1 >= 0) {
-                    var p1 = particles[i1];
+                if (iw.next >= 0) {
+                    var iw1 = indices[iw.next];
+                    var p1 = particles[iw1.value];
                     var dx = p1.position - p.position;
                     var dist_sq = math.lengthsq(dx);
                     if (dist_sq > dist_attract * dist_attract) {
@@ -152,13 +167,13 @@ namespace DiffentialGrowth {
                 // repulsion
                 var weights_repulsion = 0f;
                 float2 velocity_repulsion = default;
-                if (elementId < 0) Debug.LogError($"Element not found at: i={i}");
-                else {
+                if (elementId >= 0) {
                     foreach (var eid0 in grid.Query(p.position - queryRange, p.position + queryRange)) {
                         if (elementId == eid0) continue;
                         var e = grid.grid.elements[eid0];
                         var j = e.id;
-                        var q = particles[j];
+                        var jw = indices[j];
+                        var q = particles[jw.value];
                         var dx = q.position - p.position;
                         var dist_sq = math.lengthsq(dx);
                         if (eps < dist_sq && dist_sq < dist_repulse * dist_repulse) {
@@ -172,9 +187,9 @@ namespace DiffentialGrowth {
                     velocity += velocity_repulsion / weights_repulsion;
 
                 // alignment
-                if (i0 >= 0 && i1 >= 0) {
-                    var p0 = particles[i0];
-                    var p1 = particles[i1];
+                if (iw.prev >= 0 && iw.next >= 0) {
+                    var p0 = particles[iw.prev];
+                    var p1 = particles[iw.next];
                     var p_mid = (p0.position + p1.position) / 2f;
                     var dx = p_mid - p.position;
                     velocity += f_align * dx;
@@ -206,35 +221,78 @@ namespace DiffentialGrowth {
             }
 
             // remove overlapping particles
-            for (var i = 0; i < particles.Count; ) {
-                var i1 = (i + 1) % particles.Count;
-                var p0 = particles[i];
-                var p1 = particles[i1];
-                var dx = p1.position - p0.position;
-                var dist_sq = math.lengthsq(dx);
-                if (dist_sq < dist_attract * dist_attract) {
-                    particles.RemoveAt(i);
-                    continue;
+            for (var i = 0; i < particles.Count; i++) {
+                var iw = indices[i];
+                if (iw.value < 0) continue;
+
+                if (iw.next >= 0 && iw.prev >= 0) {
+                    var iw0 = indices[iw.prev];
+                    var iw1 = indices[iw.next];
+                    var p0 = particles[iw0.value];
+                    var p1 = particles[iw1.value];
+                    var dx = p1.position - p0.position;
+                    var dist_sq = math.lengthsq(dx);
+                    if (dist_sq < 4f * dist_attract * dist_attract) {
+                        iw0.next = iw.next;
+                        iw.value = -1;
+                        iw1.prev = iw.prev;
+                        indices[iw.prev] = iw0;
+                        indices[i] = iw;
+                        indices[iw.next] = iw1;
+                        unused.Enqueue(i);
+                    }
                 }
-                i++;
             }
 
             // insert new particles
+            addedParticles.Clear();
+            addedIndices.Clear();
             for (var i = 0; i < particles.Count; i++) {
-                var p0 = particles[i];
-                var p1 = particles[(i + 1) % particles.Count];
-                var dist_sq = math.distancesq(p0.position, p1.position);
-                if (dist_sq > dist_insert * dist_insert) {
-                    var p = new Particle() {
-                        position = (p0.position + p1.position) / 2f,
-                        velocity = p1.position - p0.position,
-                    };
-                    particles.Insert(i + 1, p);
-                    i++;
+                var iw0 = indices[i];
+                if (iw0.value < 0) continue;
+
+                if (iw0.next >= 0) {
+                    var iw1 = indices[iw0.next];
+                    var p0 = particles[iw0.value];
+                    var p1 = particles[iw1.value];
+                    var dist_sq = math.distancesq(p0.position, p1.position);
+                    if (dist_sq > dist_insert * dist_insert) {
+                        var p = new Particle() {
+                            position = (p0.position + p1.position) / 2f
+                        };
+                        var iw = new Wing<int>() {
+                            prev = iw1.prev,
+                            next = iw0.next,
+                        };
+                        addedParticles.Enqueue(p);
+                        addedIndices.Enqueue(iw);
+                    }
+                }
+            }
+            while (addedParticles.Count > 0) {
+                var p = addedParticles.Dequeue();
+                var iw = addedIndices.Dequeue();
+                if (!unused.TryDequeue(out var j)) {
+                    j = particles.Count;
+                    particles.Add(default);
+                    indices.Add(default);
+                }
+                iw.value = j;
+                particles[j] = p;
+                indices[j] = iw;
+                if (iw.prev >= 0) {
+                    var iw0 = indices[iw.prev];
+                    iw0.next = j;
+                    indices[iw.prev] = iw0;
+                }
+                if (iw.next >= 0) {
+                    var iw1 = indices[iw.next];
+                    iw1.prev = j;
+                    indices[iw.next] = iw1;
                 }
             }
         }
-        #endregion
+#endregion
 
         #region interface
         public object CuurTuner => tuner;
@@ -246,10 +304,16 @@ namespace DiffentialGrowth {
 
         #region methods
         private void InitParticles() {
-            particles.Clear();
             var n = 10;
             var r = screenSize.y >> 2;
             var center = new float2(screenSize.x / 2f, screenSize.y / 2f);
+
+            particles.Clear();
+            indices.Clear();
+
+            var lines = new List<List<Wing<int>>>();
+            var line = new List<Wing<int>>();
+            lines.Add(line);
             for (var i = 0; i < n; i++) {
                 var a = i * (2 * math.PI / n);
                 var pos = new float2(math.cos(a) * r, math.sin(a) * r) + center;
@@ -258,7 +322,24 @@ namespace DiffentialGrowth {
                     velocity = new float2(0, 0),
                 };
 
+                var node = new Wing<int>() { value = i };
+                line.Add(node);
                 particles.Add(p);
+            }
+
+            foreach (var l in lines) {
+                var offset = indices.Count;
+                var lineLength = l.Count;
+                for (var i = 0; i < lineLength; i++) {
+                    var m = l[i];
+                    var j = m.value;
+                    var i0 = (j + lineLength - 1) % lineLength + offset;
+                    var i1 = (j + 1) % lineLength + offset;
+                    m.prev = i0;
+                    m.next = i1;
+                    l[i] = m;
+                }
+                indices.AddRange(l);
             }
         }
 
@@ -287,7 +368,7 @@ namespace DiffentialGrowth {
                 tmp.AppendLine($" {i}:v={b.xy},d={b.z}");
             }
             Debug.Log(tmp);
-            #endif
+#endif
         }
         #endregion
 
@@ -297,6 +378,11 @@ namespace DiffentialGrowth {
         public struct Particle {
             public float2 position;
             public float2 velocity;
+        }
+        public struct Wing<T> {
+            public T value;
+            public int next;
+            public int prev;
         }
 
         [System.Serializable]
