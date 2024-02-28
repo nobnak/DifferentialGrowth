@@ -1,6 +1,7 @@
 using EffSpace.Extensions;
 using EffSpace.Models;
 using Gist2.Adapter;
+using Gist2.Extensions.ComponentExt;
 using LLGraphicsUnity;
 using System;
 using System.Collections.Generic;
@@ -119,7 +120,17 @@ namespace DiffentialGrowth {
         #endregion
 
         #region interface
-        public object CuurTuner => tuner;
+        public Tuner CuurTuner {
+            get {
+                return tuner;
+            }
+            set {
+                if (!tuner.EqualsAsJson(value)) {
+                    tuner = value;
+                    Invalidate();
+                }
+            }
+        }
         public void Invalidate() {}
         public void Restart() {
             InitParticles();
