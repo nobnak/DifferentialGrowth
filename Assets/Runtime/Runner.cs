@@ -90,7 +90,7 @@ namespace DiffentialGrowth {
                                 var n = particles.Count;
                                 for (int i = 0; i < n; i++) {
                                     var iw = indices[i];
-                                    if (iw.value < 0) continue;
+                                    if (iw.value < 0 || iw.next < 0) continue;
 
                                     var iw1 = indices[iw.next];
                                     var p0 = particles[iw.value];
@@ -105,6 +105,99 @@ namespace DiffentialGrowth {
             }
         }
         void Update() {
+            try {
+                BuildGrid();
+                UpdateVelocity();
+                UpdatePosition();
+                RetainBoundary();
+                Refine();
+            } catch (System.Exception e) {
+                PrintIndices();
+                throw e;
+            }
+        }
+        #endregion
+
+        #region interface
+        public object CuurTuner => tuner;
+        public void Invalidate() {}
+        public void Restart() {
+            InitParticles();
+        }
+        #endregion
+
+        #region methods
+        private void InitParticles() {
+            var n = 10;
+            var g = 2;
+            var r = screenSize.y >> 2;
+            var center = new float2(screenSize.x / 2f, screenSize.y / 2f);
+
+            particles.Clear();
+            indices.Clear();
+
+            var lines = new List<List<Wing<int>>>();
+            List<Wing<int>> line = default;
+            for (var i = 0; i < n; i++) {
+                if (i % g == 0) {
+                    line = new();
+                    lines.Add(line);
+                }
+                var a = i * (2 * math.PI / n);
+                var pos = new float2(math.cos(a) * r, math.sin(a) * r) + center;
+                var p = new Particle() {
+                    position = pos,
+                    velocity = new float2(0, 0),
+                };
+
+                var node = new Wing<int>() { value = i };
+                line.Add(node);
+                particles.Add(p);
+            }
+
+            foreach (var l in lines) {
+                var lineLength = l.Count;
+                for (var i = 0; i < lineLength; i++) {
+                    var m = l[i];
+                    var j = m.value;
+                    var i0 = (i > 0) ? j -1 : -1;
+                    var i1 = (i < lineLength - 1) ? j + 1 : -1;
+                    m.prev = i0;
+                    m.next = i1;
+                    l[i] = m;
+                }
+                indices.AddRange(l);
+            }
+        }
+
+        private void InitBoundary() {
+            boundingLines.Clear();
+
+            var vertices = new List<float2> {
+                new float2(0f, 0f),
+                new float2(0f, screenSize.y),
+                screenSize,
+                new float2(screenSize.x, 0f)
+            };
+
+            for (var i = 0; i < vertices.Count; i++) {
+                var p0 = vertices[i];
+                var p1 = vertices[(i + 1) % vertices.Count];
+                var diff = p1 - p0;
+                var n = math.normalize(new float2(-diff.y, diff.x));
+                var d = math.dot(p0, n);
+                boundingLines.Add(new float3(n, d));
+            }
+#if UNITY_EDITOR
+            var tmp = new StringBuilder($"Boundary\n");
+            for (var i = 0; i < boundingLines.Count; i++) {
+                var b = boundingLines[i];
+                tmp.AppendLine($" {i}:v={b.xy},d={b.z}");
+            }
+            Debug.Log(tmp);
+#endif
+        }
+        void UpdateVelocity() {
             var scale = tuner.scale * screenSize.y;
             var dist_insert = tuner.maxDistance * scale;
             var dist_repulse = tuner.repulsion_dist * scale;
@@ -115,25 +208,11 @@ namespace DiffentialGrowth {
             var f_align = tuner.alignment_force;
 
             var eps = dist_insert * EPSILON;
-            var dt = tuner.timeStep * tuner.scale;
 
             var queryRange = new float2(dist_repulse, dist_repulse);
             var queryCells = math.ceil(queryRange / grid.cellSize);
             if (math.any(queryCells > 10)) {
                 Debug.LogWarning($"Querying many cells: n={queryCells}");
-            }
-
-
-            grid.Clear();
-            elementIds.Clear();
-            for (var i = 0; i < particles.Count; i++) {
-                var iw = indices[i];
-                var element_id = -1;
-                if (iw.value >= 0) {
-                    var p = particles[iw.value];
-                    element_id = grid.Insert(i, p.position);
-                }
-                elementIds.Add(element_id);
             }
 
             for (var i = 0; i < particles.Count; i++) {
@@ -198,14 +277,27 @@ namespace DiffentialGrowth {
                 p.velocity = velocity;
                 particles[i] = p;
             }
+        }
+        void UpdatePosition() {
+            var scale = tuner.scale * screenSize.y;
+            var dist_repulse = tuner.repulsion_dist * scale;
+
+            var queryRange = new float2(dist_repulse, dist_repulse);
+            var queryCells = math.ceil(queryRange / grid.cellSize);
+            if (math.any(queryCells > 10)) {
+                Debug.LogWarning($"Querying many cells: n={queryCells}");
+            }
 
             // update positions
+            var dt = tuner.timeStep * tuner.scale;
             for (var i = 0; i < particles.Count; i++) {
                 var p = particles[i];
                 p.position += p.velocity * dt;
                 particles[i] = p;
             }
+        }
 
+        void RetainBoundary() {
             // boundary
             for (var i = 0; i < particles.Count; i++) {
                 var p = particles[i];
@@ -219,6 +311,12 @@ namespace DiffentialGrowth {
                 }
                 particles[i] = p;
             }
+        }
+
+        void Refine() {
+            var scale = tuner.scale * screenSize.y;
+            var dist_insert = tuner.maxDistance * scale;
+            var dist_attract = tuner.minDistance * scale;
 
             // remove overlapping particles
             for (var i = 0; i < particles.Count; i++) {
@@ -292,83 +390,28 @@ namespace DiffentialGrowth {
                 }
             }
         }
-#endregion
 
-        #region interface
-        public object CuurTuner => tuner;
-        public void Invalidate() {}
-        public void Restart() {
-            InitParticles();
-        }
-        #endregion
-
-        #region methods
-        private void InitParticles() {
-            var n = 10;
-            var r = screenSize.y >> 2;
-            var center = new float2(screenSize.x / 2f, screenSize.y / 2f);
-
-            particles.Clear();
-            indices.Clear();
-
-            var lines = new List<List<Wing<int>>>();
-            var line = new List<Wing<int>>();
-            lines.Add(line);
-            for (var i = 0; i < n; i++) {
-                var a = i * (2 * math.PI / n);
-                var pos = new float2(math.cos(a) * r, math.sin(a) * r) + center;
-                var p = new Particle() {
-                    position = pos,
-                    velocity = new float2(0, 0),
-                };
-
-                var node = new Wing<int>() { value = i };
-                line.Add(node);
-                particles.Add(p);
-            }
-
-            foreach (var l in lines) {
-                var offset = indices.Count;
-                var lineLength = l.Count;
-                for (var i = 0; i < lineLength; i++) {
-                    var m = l[i];
-                    var j = m.value;
-                    var i0 = (j + lineLength - 1) % lineLength + offset;
-                    var i1 = (j + 1) % lineLength + offset;
-                    m.prev = i0;
-                    m.next = i1;
-                    l[i] = m;
+        private void BuildGrid() {
+            grid.Clear();
+            elementIds.Clear();
+            for (var i = 0; i < particles.Count; i++) {
+                var iw = indices[i];
+                var element_id = -1;
+                if (iw.value >= 0) {
+                    var p = particles[iw.value];
+                    element_id = grid.Insert(i, p.position);
                 }
-                indices.AddRange(l);
+                elementIds.Add(element_id);
             }
         }
 
-        private void InitBoundary() {
-            boundingLines.Clear();
-
-            var vertices = new List<float2> {
-                new float2(0f, 0f),
-                new float2(0f, screenSize.y),
-                screenSize,
-                new float2(screenSize.x, 0f)
-            };
-
-            for (var i = 0; i < vertices.Count; i++) {
-                var p0 = vertices[i];
-                var p1 = vertices[(i + 1) % vertices.Count];
-                var diff = p1 - p0;
-                var n = math.normalize(new float2(-diff.y, diff.x));
-                var d = math.dot(p0, n);
-                boundingLines.Add(new float3(n, d));
+        private void PrintIndices() {
+            var tmp = new StringBuilder($"Indices\n");
+            for (var i = 0; i < indices.Count; i++) {
+                var iw = indices[i];
+                tmp.AppendLine($" [{i}]:{iw.value} <{iw.prev},{iw.next}> ");
             }
-#if UNITY_EDITOR
-            var tmp = new StringBuilder($"Boundary\n");
-            for (var i = 0; i < boundingLines.Count; i++) {
-                var b = boundingLines[i];
-                tmp.AppendLine($" {i}:v={b.xy},d={b.z}");
-            }
-            Debug.Log(tmp);
-#endif
+            Debug.Log(tmp.ToString());
         }
         #endregion
 
